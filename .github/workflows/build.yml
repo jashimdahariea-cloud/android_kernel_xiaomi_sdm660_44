@@ -1,0 +1,60 @@
+name: Build baseline kernel (lavender)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (shallow, repo history is huge)
+        uses: actions/checkout@v4
+        with:
+          ref: android-4.4-stable
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev cpio zip lz4 \
+            python3 python-is-python3 \
+            clang-14 lld-14 llvm-14 \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Build-time fixes for old kernel source (CI only, repo unchanged)
+        run: |
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped || true
+
+      - name: Build lavender_defconfig
+        shell: bash
+        env:
+          KBUILD_BUILD_USER: jashim
+          KBUILD_BUILD_HOST: github-actions
+        run: |
+          export PATH=/usr/lib/llvm-14/bin:$PATH
+          MAKE_ARGS="O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+          make $MAKE_ARGS lavender_defconfig
+          make -j$(nproc) $MAKE_ARGS 2>&1 | tee build.log
+
+      - name: List output
+        if: always()
+        run: ls -la out/arch/arm64/boot || true
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-baseline
+          path: |
+            out/arch/arm64/boot/Image.gz-dtb
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          if-no-files-found: warn
